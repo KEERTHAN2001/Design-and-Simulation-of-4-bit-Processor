@@ -1,0 +1,156 @@
+`timescale 1ns/1ps
+
+//-------------------------------------------
+// Testbench for ALU, Register File, Data Mem,
+// Control Unit, Instruction Mem and full CPU
+//-------------------------------------------
+
+module tb_all_modules;
+
+    //===========================
+    // SIGNALS FOR ALU TEST
+    //===========================
+    reg [3:0] a, b;
+    reg [2:0] alu_op;
+    wire [3:0] alu_y;
+    wire z_flag;
+
+    alu_4bit ALU_DUT(
+        .a(a), .b(b), .alu_op(alu_op),
+        .y(alu_y), .z_flag(z_flag)
+    );
+
+    //===========================
+    // SIGNALS FOR REGISTER FILE
+    //===========================
+    reg clk;
+    reg rst;
+    reg [1:0] rd_addr, rs_addr;
+    reg [3:0] wdata;
+    reg we;
+    wire [3:0] rd_data, rs_data;
+
+    reg_file_4x4 RF_DUT(
+        .clk(clk), .rst(rst), .rd_addr(rd_addr), .rs_addr(rs_addr),
+        .wdata(wdata), .we(we), .rd_data(rd_data), .rs_data(rs_data)
+    );
+
+    //===========================
+    // DATA MEMORY TEST SIGNALS
+    //===========================
+    reg mem_read, mem_write;
+    reg [3:0] addr;
+    wire [3:0] rdata;
+
+    data_mem_16x4 DM_DUT(
+        .clk(clk), .mem_read(mem_read), .mem_write(mem_write),
+        .addr(addr), .wdata(rd_data), .rdata(rdata)
+    );
+
+    //===========================
+    // CONTROL UNIT TEST SIGNALS
+    //===========================
+    reg [3:0] opcode;
+    wire reg_we_sig, mem_read_sig, mem_write_sig, pc_load_sig, use_imm, is_mem_op_sig;
+    wire [2:0] alu_op_sig;
+
+    control_unit CU_DUT(
+        .opcode(opcode), .z_flag(z_flag),
+        .reg_we(reg_we_sig), .mem_read(mem_read_sig), .mem_write(mem_write_sig),
+        .alu_op(alu_op_sig), .pc_load(pc_load_sig), .use_imm(use_imm), .is_mem_op(is_mem_op_sig)
+    );
+
+    //===========================
+    // INSTRUCTION MEMORY TEST
+    //===========================
+    reg [3:0] pc;
+    wire [7:0] instr;
+
+    instr_mem_16x8 IM_DUT(
+        .pc(pc), .instr(instr)
+    );
+
+    //===========================
+    // COMPLETE CPU TOP
+    //===========================
+    cpu_4bit CPU_DUT(
+        .clk(clk), .rst(rst)
+    );
+
+    //--------------------------
+    // CLOCK GENERATION
+    //--------------------------
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+
+    //--------------------------
+    // MASTER TEST SEQUENCE
+    //--------------------------
+    initial begin
+        $display("\n========= STARTING ALL MODULE TESTS =========\n");
+        rst = 1; #20; rst = 0;
+
+        //==========================================
+        // TEST ALU
+        //==========================================
+        $display("\n---- TESTING ALU ----");
+        a = 4'd6; b = 4'd3;
+
+        alu_op = 3'b000; #10; $display("ADD: %d + %d = %d", a, b, alu_y);
+        alu_op = 3'b001; #10; $display("SUB: %d - %d = %d", a, b, alu_y);
+        alu_op = 3'b010; #10; $display("AND: %d & %d = %d", a, b, alu_y);
+        alu_op = 3'b011; #10; $display("OR: %d | %d = %d", a, b, alu_y);
+        alu_op = 3'b100; #10; $display("XOR: %d ^ %d = %d", a, b, alu_y);
+
+        //==========================================
+        // TEST REGISTER FILE
+        //==========================================
+        $display("\n---- TESTING REGISTER FILE ----");
+        we = 1; rd_addr = 2'b00; wdata = 4'b1010; #10;
+        we = 1; rd_addr = 2'b01; wdata = 4'b1100; #10;
+        we = 0; rs_addr = 2'b00; #10; $display("Read R0: %d", rd_data);
+        rs_addr = 2'b01; #10; $display("Read R1: %d", rs_data);
+
+        //==========================================
+        // TEST DATA MEMORY
+        //==========================================
+        $display("\n---- TESTING DATA MEMORY (STORE/LOAD) ----");
+        mem_write = 1; addr = 4'd2; #10;
+        mem_write = 0; mem_read = 1; #10;
+        $display("Memory[2] read = %d", rdata);
+
+        //==========================================
+        // TEST CONTROL UNIT DECODING
+        //==========================================
+        $display("\n---- TESTING CONTROL UNIT ----");
+        opcode = 4'b0001; #10; $display("ADD reg_we=%b alu_op=%b", reg_we_sig, alu_op_sig);
+        opcode = 4'b0110; #10; $display("MOVI reg_we=%b use_imm=%b", reg_we_sig, use_imm);
+        opcode = 4'b1000; #10; $display("STORE mem_write=%b", mem_write_sig);
+
+        //==========================================
+        // TEST INSTRUCTION MEMORY
+        //==========================================
+        $display("\n---- TESTING INSTRUCTION MEMORY ----");
+        pc = 0; #10; $display("PC=0 -> Instr=%b", instr);
+        pc = 1; #10; $display("PC=1 -> Instr=%b", instr);
+        pc = 2; #10; $display("PC=2 -> Instr=%b", instr);
+
+        //==========================================
+        // TEST COMPLETE CPU
+        //==========================================
+        $display("\n---- FULL CPU EXECUTION TEST ----");
+        #200;
+
+        $display("\n========= ALL TESTS COMPLETED =========\n");
+        $finish;
+    end
+
+    // Enable waveform tracing for Cadence
+    initial begin
+        $shm_open("cpu_test.shm");
+        $shm_probe("AS");
+    end
+
+endmodule
