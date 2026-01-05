@@ -1,0 +1,150 @@
+
+`timescale 1ns/1ps
+
+//------------------------- ALU ---------------------------
+module alu_4bit(
+    input  [3:0] a,
+    input  [3:0] b,
+    input  [2:0] alu_op,
+    output reg [3:0] y,
+    output z_flag
+);
+    always @(*) begin
+        case(alu_op)
+            3'b000: y = a + b;   // ADD
+            3'b001: y = a - b;   // SUB
+            3'b010: y = a & b;   // AND
+            3'b011: y = a | b;   // OR
+            3'b100: y = a ^ b;   // XOR
+            default: y = 4'b0000;
+        endcase
+    end
+    assign z_flag = (y == 4'b0000);
+endmodule
+
+//---------------------- Register File ---------------------
+module reg_file_4x4(
+    input clk,
+    input rst,
+    input [1:0] rd_addr,
+    input [1:0] rs_addr,
+    input [3:0] wdata,
+    input we,
+    output [3:0] rd_data,
+    output [3:0] rs_data
+);
+    reg [3:0] regs [3:0];
+    integer i;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            for(i=0;i<4;i=i+1) regs[i] <= 4'b0000;
+        else if (we)
+            regs[rd_addr] <= wdata;
+    end
+
+    assign rd_data = regs[rd_addr];
+    assign rs_data = regs[rs_addr];
+endmodule
+
+//---------------------- Control Unit ----------------------
+module control_unit(
+    input [3:0] opcode,
+    input z_flag,
+    output reg reg_we,
+    output reg mem_read,
+    output reg mem_write,
+    output reg [2:0] alu_op,
+    output reg pc_load,
+    output reg use_imm,
+    output reg is_mem_op
+);
+
+    always @(*) begin
+        reg_we = 0; mem_read = 0; mem_write = 0;
+        alu_op = 3'b000; pc_load = 0;
+        use_imm = 0; is_mem_op = 0;
+
+        case(opcode)
+            4'b0001: begin reg_we =1; alu_op=3'b000; end          // ADD
+            4'b0010: begin reg_we =1; alu_op=3'b001; end          // SUB
+            4'b0011: begin reg_we =1; alu_op=3'b010; end          // AND
+            4'b0100: begin reg_we =1; alu_op=3'b011; end          // OR
+            4'b0101: begin reg_we =1; alu_op=3'b100; end          // XOR
+            4'b0110: begin reg_we =1; use_imm =1; end             // MOVI
+            4'b0111: begin reg_we =1; mem_read=1; use_imm=1; is_mem_op=1; end // LOAD
+            4'b1000: begin mem_write=1; use_imm=1; is_mem_op=1; end           // STORE
+            4'b1001: begin if (z_flag) pc_load=1; end             // JZ
+            default: ;
+        endcase
+    end
+endmodule
+
+//---------------------- Instruction Memory ----------------
+module instr_mem_16x8(
+    input [3:0] pc,
+    output reg [7:0] instr
+);
+    reg [7:0] mem [15:0];
+
+    initial begin
+        mem[0] = 8'b0110_0011; // MOVI R0 <= 3
+        mem[1] = 8'b0110_0101; // MOVI R0 <= 5
+        mem[2] = 8'b0001_0001; // ADD R0,R1  (demo)
+        mem[3] = 8'b0000_0000; // NOP
+    end
+
+    always @(*) instr = mem[pc];
+endmodule
+
+//---------------------- Data Memory -----------------------
+module data_mem_16x4(
+    input clk,
+    input mem_read,
+    input mem_write,
+    input [3:0] addr,
+    input [3:0] wdata,
+    output reg [3:0] rdata
+);
+    reg [3:0] mem [15:0];
+
+    always @(posedge clk) begin
+        if (mem_write) mem[addr] <= wdata;
+        if (mem_read)  rdata <= mem[addr];
+    end
+endmodule
+
+//---------------------- Top CPU ---------------------------
+module cpu_4bit(input clk, input rst);
+
+    reg [3:0] pc;
+    wire [7:0] instr;
+
+    wire [3:0] opcode = instr[7:4];
+    wire [1:0] rd = instr[3:2];
+    wire [1:0] rs = instr[1:0];
+    wire [3:0] imm4 = instr[3:0];
+
+    wire [3:0] rd_data, rs_data, alu_out, mem_rdata;
+    wire reg_we, mem_read, mem_write, pc_load, use_imm, is_mem_op;
+    wire [2:0] alu_op;
+    wire z_flag;
+
+    instr_mem_16x8 IM (.pc(pc), .instr(instr));
+    reg_file_4x4 RF (.clk(clk), .rst(rst), .rd_addr(rd), .rs_addr(rs),
+                     .wdata((is_mem_op && mem_read) ? mem_rdata :
+                             (use_imm ? imm4 : alu_out)),
+                     .we(reg_we), .rd_data(rd_data), .rs_data(rs_data));
+    alu_4bit ALU (.a(rd_data), .b(rs_data), .alu_op(alu_op), .y(alu_out), .z_flag(z_flag));
+    data_mem_16x4 DM (.clk(clk), .mem_read(mem_read), .mem_write(mem_write),
+                      .addr(imm4), .wdata(rd_data), .rdata(mem_rdata));
+    control_unit CU (.opcode(opcode), .z_flag(z_flag), .reg_we(reg_we),
+                     .mem_read(mem_read), .mem_write(mem_write), .alu_op(alu_op),
+                     .pc_load(pc_load), .use_imm(use_imm), .is_mem_op(is_mem_op));
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) pc <= 4'b0000;
+        else if (pc_load) pc <= imm4;
+        else pc <= pc + 1;
+    end
+endmodule
